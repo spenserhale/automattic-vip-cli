@@ -6,6 +6,7 @@ import gql from 'graphql-tag';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import util from 'node:util';
 
 import { isAlias, parseEnvAliasFromArgv } from './envAlias';
 import * as exit from './exit';
@@ -19,9 +20,57 @@ import { trackEvent } from '../../lib/tracker';
 import { parseApiError } from '../../lib/utils';
 import UserError from '../user-error';
 
+/**
+ * Builds a human-readable, multi-line description of a fatal error for display.
+ *
+ * Bare native rejections (e.g. keytar's "An unknown error occurred.") arrive as
+ * Errors whose stack is only the message line, so the usual stack print reveals
+ * nothing. In those cases — and whenever the error carries extra own properties
+ * that would otherwise be lost — we append a `util.inspect` dump so the details
+ * survive.
+ *
+ * @param {unknown} err The thrown value.
+ * @returns {string} The formatted details to print.
+ */
+export function formatFatalError( err ) {
+	if ( ! ( err instanceof Error ) ) {
+		return String( err );
+	}
+
+	const lines = [];
+
+	if ( err.stack ) {
+		lines.push( err.stack );
+	} else {
+		lines.push( err.message );
+	}
+
+	if ( err.code !== undefined ) {
+		lines.push( `Code: ${ String( err.code ) }` );
+	}
+
+	if ( err.cause !== undefined ) {
+		lines.push( `Cause: ${ util.inspect( err.cause, { depth: 5 } ) }` );
+	}
+
+	// A stack with no frames beyond the message line tells us nothing, and extra
+	// own properties would be dropped by the stack/message print above. In either
+	// case, dump the full object so no detail is lost.
+	const stackHasFrames = Boolean( err.stack ) && /\n\s+at\s/.test( err.stack );
+	const hasExtraOwnProps = Object.getOwnPropertyNames( err ).some(
+		prop => ! [ 'message', 'stack' ].includes( prop )
+	);
+
+	if ( ! stackHasFrames || hasExtraOwnProps ) {
+		lines.push( util.inspect( err, { depth: 5 } ) );
+	}
+
+	return lines.join( '\n' );
+}
+
 function uncaughtError( err ) {
 	// Error raised when trying to write to an already closed stream
-	if ( err.code === 'EPIPE' ) {
+	if ( err?.code === 'EPIPE' ) {
 		return;
 	}
 	if ( err instanceof UserError ) {
@@ -29,9 +78,15 @@ function uncaughtError( err ) {
 	}
 
 	console.log( chalk.red( '✕' ), 'Please contact VIP Support with the following information:' );
-	console.log( chalk.dim( err.stack ) );
+	console.log( chalk.dim( formatFatalError( err ) ) );
+	console.log(
+		chalk.dim(
+			'Hint: re-run with the environment variable DEBUG=@automattic/vip:* to print verbose logs, even when the failure happens before argument parsing.'
+		)
+	);
 
-	exit.withError( 'Unexpected error' );
+	const message = err instanceof Error ? err.message : String( err );
+	exit.withError( `Unexpected error: ${ message }` );
 }
 process.on( 'uncaughtException', uncaughtError );
 process.on( 'unhandledRejection', uncaughtError );

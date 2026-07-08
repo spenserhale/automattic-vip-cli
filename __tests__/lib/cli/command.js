@@ -2,7 +2,7 @@ import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
-import command, { containsAppEnvArgument } from '../../../src/lib/cli/command';
+import command, { containsAppEnvArgument, formatFatalError } from '../../../src/lib/cli/command';
 
 jest.mock( 'node:child_process', () => ( {
 	spawnSync: jest.fn( () => ( { status: 0 } ) ),
@@ -268,6 +268,57 @@ describe( 'utils/cli/command', () => {
 
 			expect( options.type ).toBe( 'app' );
 			expect( options.limit ).toBe( 5 );
+		} );
+	} );
+
+	describe( 'formatFatalError', () => {
+		it( 'includes the message and stack of a plain Error', () => {
+			const err = new Error( 'boom' );
+
+			const result = formatFatalError( err );
+
+			expect( result ).toContain( 'boom' );
+			// A normal Error has real stack frames.
+			expect( result ).toMatch( /\n\s+at\s/ );
+			// No inspect dump needed when the stack has frames and there are no extra props.
+			expect( result ).not.toContain( '[Error: boom]' );
+		} );
+
+		it( 'appends an inspect dump for a stack-less bare native-style error', () => {
+			// keytar-style rejection: an Error whose stack is only the message line.
+			const err = new Error( 'An unknown error occurred.' );
+			err.stack = 'Error: An unknown error occurred.';
+
+			const result = formatFatalError( err );
+
+			expect( result ).toContain( 'An unknown error occurred.' );
+			// The inspect dump renders the Error representation.
+			expect( result ).toContain( '[Error: An unknown error occurred.]' );
+		} );
+
+		it( 'returns String() for a non-Error thrown value', () => {
+			expect( formatFatalError( 'just a string' ) ).toBe( 'just a string' );
+			expect( formatFatalError( 42 ) ).toBe( '42' );
+		} );
+
+		it( 'includes the code property when present', () => {
+			const err = new Error( 'connection failed' );
+			err.code = 'ECONNREFUSED';
+
+			const result = formatFatalError( err );
+
+			expect( result ).toContain( 'connection failed' );
+			expect( result ).toContain( 'ECONNREFUSED' );
+			// An extra own property triggers the inspect dump so it is not lost.
+			expect( result ).toContain( "code: 'ECONNREFUSED'" );
+		} );
+
+		it( 'includes the cause when present', () => {
+			const err = new Error( 'outer', { cause: new Error( 'inner cause' ) } );
+
+			const result = formatFatalError( err );
+
+			expect( result ).toContain( 'inner cause' );
 		} );
 	} );
 } );
