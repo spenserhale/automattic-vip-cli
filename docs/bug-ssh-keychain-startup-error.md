@@ -44,6 +44,34 @@ Chain of events (line numbers refer to the code as of v4.0.10):
 
 2. `src/lib/cli/command.js`: the top-level `uncaughtException`/`unhandledRejection` handler now prints the full error details (message, code, stack, inspected properties) plus environment info, and tells the user they can re-run with `DEBUG=@automattic/vip:*` (an env var works even when the crash precedes argument parsing).
 
+### Using VIP_CLI_TOKEN
+
+For SSH / headless sessions where the OS keychain is unreadable, supply the auth token directly via the `VIP_CLI_TOKEN` environment variable. When it is set and non-empty, `Token.get()` builds the token from it and skips the keychain entirely — no read, no ACL prompt, no crash. This mirrors `gh`'s `GH_TOKEN` and the existing `WPVIP_DEPLOY_TOKEN`.
+
+```sh
+# Run any command with the token supplied inline:
+VIP_CLI_TOKEN="<your-token>" vip whoami
+
+# Or export it for the session:
+export VIP_CLI_TOKEN="<your-token>"
+vip whoami
+```
+
+Getting a token:
+
+- From the dashboard: https://dashboard.wpvip.com/me/cli/token
+- Or extract the one already stored locally (run this in a local/graphical session where the keychain is readable):
+
+  ```sh
+  security find-generic-password -s vip-go-cli -w
+  ```
+
+Notes:
+
+- The token is a JWT with an expiry; once it expires you must obtain a new one (the env var does not auto-refresh).
+- `VIP_CLI_TOKEN` takes precedence over the keychain-stored token. While it is set, `vip login` warns that any token you log in with will not be used, and `vip logout` warns that you remain authenticated until you unset the variable.
+- A malformed value produces a clear error naming `VIP_CLI_TOKEN` rather than a raw jwt-decode stack.
+
 ## Alternatives considered
 
 - Falling back to the Insecure keychain when a Secure read fails: rejected because it would create split credential state (SSH sessions writing plaintext tokens while local sessions use the OS keychain) and silently downgrade security.

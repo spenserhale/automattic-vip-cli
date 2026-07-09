@@ -16,7 +16,7 @@ import {
 	isSeaRuntime,
 } from '../lib/cli/sea-dispatch';
 import tokenCache from '../lib/rechallenge/token-cache';
-import Token from '../lib/token';
+import Token, { EnvTokenError, ENV_TOKEN_NAME, TOKEN_URL } from '../lib/token';
 import { aliasUser, trackEvent } from '../lib/tracker';
 
 const debug = debugLib( '@automattic/vip:bin:vip' );
@@ -29,7 +29,7 @@ if ( config && config.environment !== 'production' ) {
 }
 
 // Config
-const tokenURL = 'https://dashboard.wpvip.com/me/cli/token';
+const tokenURL = TOKEN_URL;
 const customDeployToken = process.env.WPVIP_DEPLOY_TOKEN;
 
 async function maybeExecuteSeaTargetCommand() {
@@ -108,6 +108,16 @@ async function runLoginFlow() {
 			tokenURL
 	);
 	console.log();
+
+	if ( Token.isEnvTokenSet() ) {
+		console.log(
+			chalk.yellow(
+				`  Note: ${ ENV_TOKEN_NAME } is set and takes precedence over the stored credentials. ` +
+					`The token you log in with will not be used until you unset ${ ENV_TOKEN_NAME }.`
+			)
+		);
+		console.log();
+	}
 
 	await trackEvent( 'login_command_execute' );
 
@@ -224,6 +234,12 @@ async function resolveToken( flags ) {
 	try {
 		return await Token.get();
 	} catch ( err ) {
+		// A malformed VIP_CLI_TOKEN already carries an actionable message that
+		// names the env var; surface it directly instead of the keychain hint.
+		if ( err instanceof EnvTokenError ) {
+			exit.withError( err.message );
+		}
+
 		debug( 'Failed to read token from keychain:', err );
 
 		exit.withError(
@@ -232,6 +248,7 @@ async function resolveToken( flags ) {
 				'If you are connected over SSH or a non-graphical session, the OS keychain may be ' +
 				'locked or unable to show an authorization prompt. Try running VIP-CLI from a local, ' +
 				'graphical session, or unlock the keychain first.\n' +
+				`Alternatively, set the ${ ENV_TOKEN_NAME } environment variable with a token from ${ tokenURL }\n` +
 				'Re-run with the environment variable DEBUG=@automattic/vip:* for full details.'
 		);
 	}

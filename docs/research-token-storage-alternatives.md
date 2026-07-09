@@ -1,6 +1,6 @@
 # Research: Secure token-storage alternatives for SSH / headless sessions
 
-Companion to [bug-ssh-keychain-startup-error.md](./bug-ssh-keychain-startup-error.md). Status: **options for review — nothing implemented yet.**
+Companion to [bug-ssh-keychain-startup-error.md](./bug-ssh-keychain-startup-error.md). Status: **Option 1 (`VIP_CLI_TOKEN`) implemented on this branch; remaining options still for review.**
 
 ## Problem
 
@@ -18,9 +18,11 @@ This is not a macOS quirk. Every OS-native vault fails headless for the same str
 
 ## Options
 
-### Option 1 — Token via environment variable (bypass storage entirely)
+### Option 1 — Token via environment variable (bypass storage entirely) — ✅ implemented on this branch
 
 `VIP_CLI_TOKEN=<personal access token>` read at startup, taking precedence over the keychain (precedent: `GH_TOKEN`, `DOPPLER_TOKEN`, `STRIPE_API_KEY`, `OP_SERVICE_ACCOUNT_TOKEN`, npm's `${NPM_TOKEN}` interpolation). VIP-CLI already does exactly this for one flow: `WPVIP_DEPLOY_TOKEN`.
+
+Implementation notes (this branch): `Token.get()` is the single choke point — when `VIP_CLI_TOKEN` is set and non-empty it returns a token built from the env var and never touches the keychain. A malformed env token surfaces an actionable `EnvTokenError` naming the variable. `Token.uuid()` (analytics) degrades to an ephemeral per-process UUID when the keychain is unreachable, so a command authenticated via the env var still runs over SSH. `vip login` and `vip logout` warn that the env var takes precedence / is still set. See the "Using VIP_CLI_TOKEN" section in [bug-ssh-keychain-startup-error.md](./bug-ssh-keychain-startup-error.md).
 
 - **Security:** nothing written to disk by us; the user decides where the token lives (shell profile, 1Password `op run`, direnv, CI secret). Exposure risk shifts to env/shell-history hygiene.
 - **Headless UX:** perfect — works everywhere, including CI.
