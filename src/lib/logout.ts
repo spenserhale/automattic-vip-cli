@@ -1,15 +1,37 @@
 import chalk from 'chalk';
+import debugLib from 'debug';
 
 import http from '../lib/api/http';
 import tokenCache from '../lib/rechallenge/token-cache';
 import Token, { ENV_TOKEN_NAME } from '../lib/token';
 import { trackEvent } from '../lib/tracker';
 
+const debug = debugLib( '@automattic/vip:logout' );
+
 export default async (): Promise< void > => {
 	try {
-		await http( '/logout', { method: 'post' } );
+		// VIP_CLI_TOKEN is user-managed: logout must not invalidate it server-side.
+		// Server-side logout is also skipped when the stored token cannot be read
+		// (e.g. a locked OS keychain over SSH) — there is nothing usable to send.
+		if ( ! Token.isEnvTokenSet() ) {
+			let storedToken;
+			try {
+				storedToken = await Token.get();
+			} catch ( err ) {
+				debug( 'Skipping server-side logout; could not read the stored token:', err );
+			}
+
+			if ( storedToken?.valid() ) {
+				await http( '/logout', { method: 'post' } );
+			}
+		}
 	} finally {
-		await Token.purge();
+		try {
+			await Token.purge();
+		} catch ( err ) {
+			debug( 'Could not purge the stored token from the keychain:', err );
+		}
+
 		await tokenCache.clearAll();
 	}
 

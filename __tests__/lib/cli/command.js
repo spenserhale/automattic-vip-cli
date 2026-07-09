@@ -301,6 +301,14 @@ describe( 'utils/cli/command', () => {
 			expect( formatFatalError( 42 ) ).toBe( '42' );
 		} );
 
+		it( 'inspects object-shaped non-Error rejections instead of printing [object Object]', () => {
+			const result = formatFatalError( { code: 'ECONNRESET', detail: 'socket hang up' } );
+
+			expect( result ).not.toContain( '[object Object]' );
+			expect( result ).toContain( 'ECONNRESET' );
+			expect( result ).toContain( 'socket hang up' );
+		} );
+
 		it( 'includes the code property when present', () => {
 			const err = new Error( 'connection failed' );
 			err.code = 'ECONNREFUSED';

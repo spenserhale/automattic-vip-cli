@@ -34,7 +34,10 @@ import UserError from '../user-error';
  */
 export function formatFatalError( err ) {
 	if ( ! ( err instanceof Error ) ) {
-		return String( err );
+		// Plain objects would stringify to "[object Object]"; inspect them instead.
+		return typeof err === 'object' && err !== null
+			? util.inspect( err, { depth: 5 } )
+			: String( err );
 	}
 
 	const lines = [];

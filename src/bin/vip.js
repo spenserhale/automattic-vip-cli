@@ -89,7 +89,11 @@ const runCmd = async function () {
  * @returns {boolean}
  */
 function doesArgvHaveAtLeastOneParam( argv, params ) {
-	return argv.some( arg => params.includes( arg ) );
+	// Arguments after `--` belong to the wrapped command (e.g. `vip wp <env> -- --help`)
+	// and must not classify the invocation itself as help/version/etc.
+	const terminatorIndex = argv.indexOf( '--' );
+	const ownArgs = terminatorIndex === -1 ? argv : argv.slice( 0, terminatorIndex );
+	return ownArgs.some( arg => params.includes( arg ) );
 }
 
 async function runLoginFlow() {
