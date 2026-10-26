@@ -44,13 +44,13 @@ func NewStore(k *keychain.Keychain) *Store { return &Store{K: k} }
 
 func (s *Store) Save(rawJWT string) error {
 	if err := s.K.Set(s.K.Account(), rawJWT); err != nil {
-		return err
+		return credentialStoreError(credentialSave, err)
 	}
 	err := s.K.Backend.Delete(s.K.Service, s.fallbackMarkerAccount())
 	if errors.Is(err, keychain.ErrNotFound) {
 		return nil
 	}
-	return err
+	return credentialStoreError(credentialSave, err)
 }
 
 func (s *Store) Resolve() (Credential, error) {
@@ -87,13 +87,13 @@ func (s *Store) loadStored() (string, error) {
 	if _, markerErr := s.K.Backend.Get(s.K.Service, s.fallbackMarkerAccount()); markerErr == nil {
 		return "", ErrNoToken
 	} else if !errors.Is(markerErr, keychain.ErrNotFound) {
-		return "", markerErr
+		return "", credentialStoreError(credentialRead, markerErr)
 	}
 	v, err = s.K.Backend.Get(s.K.LegacyService, s.K.LegacyService)
 	if errors.Is(err, keychain.ErrNotFound) {
 		return "", ErrNoToken
 	}
-	return v, err
+	return v, credentialStoreError(credentialRead, err)
 }
 
 // LoadPrimary returns only vip-next's stored credential. Callers that mutate
@@ -103,17 +103,17 @@ func (s *Store) LoadPrimary() (string, error) {
 	if errors.Is(err, keychain.ErrNotFound) {
 		return "", ErrNoToken
 	}
-	return v, err
+	return v, credentialStoreError(credentialRead, err)
 }
 
 func (s *Store) Delete() error {
 	err := s.K.Delete(s.K.Account())
 	missing := errors.Is(err, keychain.ErrNotFound)
 	if err != nil && !missing {
-		return err
+		return credentialStoreError(credentialRemove, err)
 	}
 	if markerErr := s.K.Backend.Set(s.K.Service, s.fallbackMarkerAccount(), legacyFallbackDisabledValue); markerErr != nil {
-		return markerErr
+		return credentialStoreError(credentialRemove, markerErr)
 	}
 	// Run the hook even when the primary token was already gone — elevated
 	// tokens may exist independently and need clearing.

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { API_HOST, PRODUCTION_API_HOST } from './api/constants';
 import { getKeychain } from './keychain';
+import UserError from './user-error';
 
 interface Payload {
 	id?: number;
@@ -22,6 +23,49 @@ export interface ResolvedToken {
 }
 
 export class EnvTokenError extends Error {}
+
+type KeychainOperation = 'read' | 'save' | 'remove';
+
+const keychainFailures: Record< KeychainOperation, string > = {
+	read: 'read VIP-CLI credentials from',
+	save: 'save VIP-CLI credentials to',
+	remove: 'remove VIP-CLI credentials from',
+};
+
+/**
+ * The OS keychain refused an operation on the stored credential. On macOS this
+ * happens over SSH, where the login keychain is locked for the session and
+ * cannot show an authorization prompt, and keytar rejects with a bare
+ * "An unknown error occurred.".
+ */
+export class KeychainError extends UserError {
+	constructor( operation: KeychainOperation, cause: unknown ) {
+		const reason = cause instanceof Error ? cause.message : String( cause );
+		const detail = /[.!?]$/.test( reason ) ? reason : `${ reason }.`;
+		const remedy =
+			operation === 'remove'
+				? 'Run VIP-CLI from a local graphical session, or unlock the keychain.'
+				: `Run VIP-CLI from a local graphical session, unlock the keychain, or set ${ ENV_TOKEN_NAME } to a Personal Access Token from ${ TOKEN_URL }.`;
+		super(
+			`Unable to ${ keychainFailures[ operation ] } the system keychain: ${ detail } ` +
+				'If you are connected over SSH or another non-graphical session, the keychain may be locked or unable to show an authorization prompt. ' +
+				remedy,
+			{ cause }
+		);
+		this.name = 'KeychainError';
+	}
+}
+
+async function withKeychainError< T >(
+	operation: KeychainOperation,
+	action: () => Promise< T >
+): Promise< T > {
+	try {
+		return await action();
+	} catch ( err ) {
+		throw new KeychainError( operation, err );
+	}
+}
 
 const environmentUUIDs = new Map< string, string >();
 export default class Token {
@@ -121,8 +165,10 @@ export default class Token {
 
 	public static async set( token: string ): Promise< boolean > {
 		const service = Token.getServiceName();
-		const keychain = await getKeychain();
-		return keychain.setPassword( service, token );
+		return withKeychainError( 'save', async () => {
+			const keychain = await getKeychain();
+			return keychain.setPassword( service, token );
+		} );
 	}
 
 	public static isEnvironmentSet(): boolean {
@@ -149,8 +195,10 @@ export default class Token {
 		}
 
 		const service = Token.getServiceName();
-		const keychain = await getKeychain();
-		const raw = await keychain.getPassword( service );
+		const raw = await withKeychainError( 'read', async () => {
+			const keychain = await getKeychain();
+			return keychain.getPassword( service );
+		} );
 		return { token: new Token( raw ?? '' ), source: 'stored' };
 	}
 
@@ -160,8 +208,10 @@ export default class Token {
 
 	public static async purge(): Promise< boolean > {
 		const service = Token.getServiceName();
-		const keychain = await getKeychain();
-		return keychain.deletePassword( service );
+		return withKeychainError( 'remove', async () => {
+			const keychain = await getKeychain();
+			return keychain.deletePassword( service );
+		} );
 	}
 
 	public static getServiceName( modifier: string = '' ): string {
