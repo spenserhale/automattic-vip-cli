@@ -10,7 +10,7 @@ import command, { containsAppEnvArgument } from '../lib/cli/command';
 import config from '../lib/cli/config';
 import * as exit from '../lib/cli/exit';
 import tokenCache from '../lib/rechallenge/token-cache';
-import Token, { EnvTokenError, ENV_TOKEN_NAME } from '../lib/token';
+import Token, { EnvTokenError, ENV_TOKEN_NAME, KeychainError } from '../lib/token';
 import { aliasUser, trackEvent } from '../lib/tracker';
 
 const debug = debugLib( '@automattic/vip:bin:vip' );
@@ -142,6 +142,10 @@ async function runLoginFlow() {
 			error: err.message,
 		} );
 
+		if ( err instanceof KeychainError ) {
+			exit.withError( err.message );
+		}
+
 		throw err;
 	}
 
@@ -188,7 +192,7 @@ const rootCmd = async function () {
 		try {
 			token = await Token.get();
 		} catch ( err ) {
-			if ( err instanceof EnvTokenError ) {
+			if ( err instanceof EnvTokenError || err instanceof KeychainError ) {
 				exit.withError( err.message );
 			}
 			throw err;

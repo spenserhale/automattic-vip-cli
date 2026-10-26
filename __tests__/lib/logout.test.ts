@@ -17,6 +17,7 @@ jest.mock( '../../src/lib/token', () => ( {
 	__esModule: true,
 	ENV_TOKEN_NAME: 'VIP_CLI_TOKEN',
 	default: {
+		get: jest.fn(),
 		purge: jest.fn( () => Promise.resolve( true ) ),
 		isEnvironmentSet: jest.fn( () => false ),
 	},
@@ -38,6 +39,8 @@ jest.mock( '../../src/lib/tracker', () => ( {
 
 const mockHttpApiFn = jest.mocked( http );
 // eslint-disable-next-line @typescript-eslint/unbound-method
+const mockTokenGetFn = jest.mocked( Token.get );
+// eslint-disable-next-line @typescript-eslint/unbound-method
 const mockTokenPurgeFn = jest.mocked( Token.purge );
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const mockIsEnvironmentSet = jest.mocked( Token.isEnvironmentSet );
@@ -46,11 +49,13 @@ describe( 'logout', () => {
 	beforeEach( () => {
 		jest.clearAllMocks();
 		mockIsEnvironmentSet.mockReturnValue( false );
+		mockTokenGetFn.mockResolvedValue( { raw: 'stored-token' } as Token );
 	} );
 
 	it( 'purges primary token, clears elevated-token cache, and emits telemetry', async () => {
 		mockHttpApiFn.mockResolvedValueOnce( { ok: true } as unknown as Response );
 		await logout();
+		expect( mockHttpApiFn ).toHaveBeenCalledWith( '/logout', { method: 'post' } );
 		expect( mockTokenPurgeFn ).toHaveBeenCalledTimes( 1 );
 		expect( tokenCache.clearAll ).toHaveBeenCalledTimes( 1 );
 		expect( trackEvent ).toHaveBeenCalledWith( 'logout_command_execute' );
@@ -75,5 +80,39 @@ describe( 'logout', () => {
 		} finally {
 			log.mockRestore();
 		}
+	} );
+
+	it( 'skips the server-side logout when no token is stored', async () => {
+		mockTokenGetFn.mockResolvedValueOnce( { raw: '' } as Token );
+		await logout();
+		expect( mockHttpApiFn ).not.toHaveBeenCalled();
+		expect( mockTokenPurgeFn ).toHaveBeenCalledTimes( 1 );
+		expect( trackEvent ).toHaveBeenCalledWith( 'logout_command_execute' );
+	} );
+
+	it( 'skips the server-side logout when the stored token cannot be read', async () => {
+		mockTokenGetFn.mockRejectedValueOnce( new Error( 'keychain locked' ) );
+		await logout();
+		expect( mockHttpApiFn ).not.toHaveBeenCalled();
+		expect( mockTokenPurgeFn ).toHaveBeenCalledTimes( 1 );
+		expect( tokenCache.clearAll ).toHaveBeenCalledTimes( 1 );
+		expect( trackEvent ).toHaveBeenCalledWith( 'logout_command_execute' );
+	} );
+
+	it( 'fails instead of reporting success when the stored token cannot be removed', async () => {
+		const keychainError = new Error( 'Unable to remove VIP-CLI credentials' );
+		mockTokenGetFn.mockRejectedValueOnce( new Error( 'keychain locked' ) );
+		mockTokenPurgeFn.mockRejectedValueOnce( keychainError );
+		await expect( logout() ).rejects.toBe( keychainError );
+		// The user is still logged in, so their cached elevation stays too, as in vip-next.
+		expect( tokenCache.clearAll ).not.toHaveBeenCalled();
+		expect( trackEvent ).not.toHaveBeenCalled();
+	} );
+
+	it( 'completes when cached elevated tokens cannot be cleared', async () => {
+		mockHttpApiFn.mockResolvedValueOnce( { ok: true } as unknown as Response );
+		jest.mocked( tokenCache.clearAll ).mockRejectedValueOnce( new Error( 'keychain locked' ) );
+		await expect( logout() ).resolves.toBeUndefined();
+		expect( trackEvent ).toHaveBeenCalledWith( 'logout_command_execute' );
 	} );
 } );

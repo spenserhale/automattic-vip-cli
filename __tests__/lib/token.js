@@ -1,4 +1,5 @@
-import Token, { SERVICE } from '../../src/lib/token';
+import Token, { KeychainError, SERVICE } from '../../src/lib/token';
+import UserError from '../../src/lib/user-error';
 
 describe( 'token tests', () => {
 	it( 'should correctly validate token', () => {
@@ -147,5 +148,81 @@ describe( 'environment PAT resolution', () => {
 		process.env.VIP_CLI_TOKEN = raw;
 		await expect( Token.resolve() ).rejects.toThrow( /VIP_CLI_TOKEN/ );
 		expect( keychainSpy ).not.toHaveBeenCalled();
+	} );
+} );
+
+// Over SSH on macOS the login keychain is locked for the session, and keytar
+// rejects every access to the stored credential with a bare native error.
+describe( 'keychain failures', () => {
+	const original = process.env.VIP_CLI_TOKEN;
+	const nativeError = new Error( 'An unknown error occurred.' );
+	let keychainSpy;
+	let keychainDouble;
+
+	beforeEach( () => {
+		delete process.env.VIP_CLI_TOKEN;
+		keychainDouble = {
+			getPassword: jest.fn().mockRejectedValue( nativeError ),
+			setPassword: jest.fn().mockRejectedValue( nativeError ),
+			deletePassword: jest.fn().mockRejectedValue( nativeError ),
+		};
+		keychainSpy = jest
+			.spyOn( require( '../../src/lib/keychain' ), 'getKeychain' )
+			.mockResolvedValue( keychainDouble );
+	} );
+
+	afterEach( () => {
+		keychainSpy.mockRestore();
+		if ( original === undefined ) {
+			delete process.env.VIP_CLI_TOKEN;
+		} else {
+			process.env.VIP_CLI_TOKEN = original;
+		}
+	} );
+
+	it.each( [
+		[ 'reading', () => Token.get(), 'Unable to read VIP-CLI credentials from the system keychain' ],
+		[
+			'saving',
+			() => Token.set( 'raw' ),
+			'Unable to save VIP-CLI credentials to the system keychain',
+		],
+		[
+			'removing',
+			() => Token.purge(),
+			'Unable to remove VIP-CLI credentials from the system keychain',
+		],
+	] )( 'explains a keychain failure when %s the stored token', async ( _label, action, prefix ) => {
+		const error = await action().catch( err => err );
+
+		expect( error ).toBeInstanceOf( KeychainError );
+		expect( error ).toBeInstanceOf( UserError );
+		expect( error.cause ).toBe( nativeError );
+		expect( error.message ).toContain( `${ prefix }: An unknown error occurred. ` );
+		expect( error.message ).toContain( 'SSH' );
+	} );
+
+	it( 'suggests VIP_CLI_TOKEN when the stored token cannot be read or saved', async () => {
+		await expect( Token.get() ).rejects.toThrow( /set VIP_CLI_TOKEN/ );
+		await expect( Token.set( 'raw' ) ).rejects.toThrow( /set VIP_CLI_TOKEN/ );
+	} );
+
+	it( 'does not suggest VIP_CLI_TOKEN when the stored token cannot be removed', async () => {
+		await expect( Token.purge() ).rejects.toThrow( /unlock the keychain\.$/ );
+		await expect( Token.purge() ).rejects.not.toThrow( /VIP_CLI_TOKEN/ );
+	} );
+
+	it( 'ends the reason with a full stop when the native message has none', async () => {
+		keychainDouble.getPassword.mockRejectedValueOnce( new Error( 'exit status 36' ) );
+
+		await expect( Token.get() ).rejects.toThrow( /keychain: exit status 36\. If/ );
+	} );
+
+	it( 'does not touch the keychain for an environment PAT', async () => {
+		process.env.VIP_CLI_TOKEN =
+			'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiaWQiOjcsImlhdCI6MTUxNjIzOTAyMn0.RTJMXHhhiaCxQberZ5Pre7SBU3Ci8EvCyaOXoqG3pNA';
+
+		await expect( Token.get() ).resolves.toBeInstanceOf( Token );
+		expect( keychainDouble.getPassword ).not.toHaveBeenCalled();
 	} );
 } );
